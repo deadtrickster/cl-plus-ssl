@@ -38,7 +38,7 @@
                             (session-cache-mode +SSL-SESS-CACHE-SERVER+)
                             (verify +SSL-VERIFY-PEER+)
                             (verify-depth 100)
-                            (verify-callback (cffi:callback cb-ssl-verify-host-and-expiration))
+                            (verify-callback (cffi:callback cb-ssl-verify))
                             (ca-files)
                             (ca-pathes)
                             (password-callback))

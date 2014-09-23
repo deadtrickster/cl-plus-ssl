@@ -17,6 +17,7 @@
   (defconstant +ssl-error-syscall+ 5)
   (defconstant +ssl-error-zero-return+ 6)
   (defconstant +ssl-error-want-connect+ 7))
+  )
 
 
 ;;; Condition hierarchy
@@ -216,6 +217,31 @@ by READ-SSL-ERROR-QUEUE) or an SSL-ERROR condition."
                      (ssl-error-handle condition)
                      (ssl-error-ret condition))
 	     (format-ssl-error-queue stream condition))))
+
+(define-condition ssl-unable-to-match-alternative-name (ssl-error-verify)
+  ((hostname :initarg :hostname :reader verify-error-hostname)
+   (found-alt-names :initarg :found-alt-names :reader verify-error-found-alt-names))
+  (:documentation
+   "No alternative name provided by subject certificate matches hostname")
+  (:report (lambda (condition stream)
+             (format stream "No alternative name provided by subject certificate (~{~a~^, ~}) matches ~A" (verify-error-found-alt-names condition) (verify-error-hostname condition)))))
+
+(define-condition ssl-unable-to-obtain-common-name (ssl-error-verify)
+  ()
+  (:documentation
+   "Unable to obtain certificate common name")
+  (:report (lambda (condition stream)
+             (format stream "Unable to obtain certificate common name"))))
+
+
+(define-condition ssl-unable-to-match-common-name (ssl-error-verify)
+  ((hostname :initarg :hostname :reader verify-error-hostname)
+   (found-common-name :initform nil :initarg :found-common-name :reader verify-error-found-common-name))
+  (:documentation
+   "Certificate common name doesn't match hostname")
+  (:report (lambda (condition stream)
+             (format stream "Certificate common name ~A doesn't match hostname ~A" (verify-error-found-common-name condition) (verify-error-hostname condition)))))
+
 
 (defun ssl-signal-error (handle syscall error-code original-error)
   (let ((queue (read-ssl-error-queue)))

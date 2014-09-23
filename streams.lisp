@@ -299,8 +299,7 @@ After RELOAD, you need to call this again."
          (err (ssl-get-verify-result handle)))
     (unless (eql err 0)
       (error 'ssl-error-verify :stream ssl-stream :error-code err))    
-    (unless (verify-hostname handle hostname)
-      (error 'ssl-error-verify :stream ssl-stream :error-code 666))))
+    (verify-hostname handle hostname)))
 
 (defun handle-external-format (stream ef)
   (if ef

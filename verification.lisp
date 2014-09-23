@@ -33,9 +33,11 @@ Check_host only")
       (if x509-vp
           (X509-VERIFY-PARAM-free x509-vp)))))
 
-(cffi:defcallback cb-ssl-verify-host-and-expiration :int ((ok :int) (ctx :pointer))
-  (let* (;; (certificate (X509-STORE-CTX-get-current-cert ctx))
-        (error-code (print (X509_STORE_CTX-get-error ctx))))
+(cffi:defcallback cb-ssl-verify :int ((ok :int) (ctx :pointer))
+  (let* (;(certificate (X509-STORE-CTX-get-current-cert ctx))
+         (error-code (X509_STORE_CTX-get-error ctx)))
+    (unless (eql error-code 0)
+      (error 'ssl-error-verify  :error-code error-code))
     ok))
 
 (cffi:defcfun ("sk_value" sk-value)
@@ -99,24 +101,24 @@ Check_host only")
 #|
 http://tools.ietf.org/html/rfc6125
 
-   1.  The client SHOULD NOT attempt to match a presented identifier in
-       which the wildcard character comprises a label other than the
-       left-most label (e.g., do not match bar.*.example.net).
+1.  The client SHOULD NOT attempt to match a presented identifier in
+which the wildcard character comprises a label other than the
+left-most label (e.g., do not match bar.*.example.net).
 
-   2.  If the wildcard character is the only character of the left-most
-       label in the presented identifier, the client SHOULD NOT compare
-       against anything but the left-most label of the reference
-       identifier (e.g., *.example.com would match foo.example.com but
-       not bar.foo.example.com or example.com).
+2.  If the wildcard character is the only character of the left-most
+label in the presented identifier, the client SHOULD NOT compare
+against anything but the left-most label of the reference
+identifier (e.g., *.example.com would match foo.example.com but
+not bar.foo.example.com or example.com).
 
-   3.  The client MAY match a presented identifier in which the wildcard
-       character is not the only character of the label (e.g.,
-       baz*.example.net and *baz.example.net and b*z.example.net would
-       be taken to match baz1.example.net and foobaz.example.net and
-       buzz.example.net, respectively).  However, the client SHOULD NOT
-       attempt to match a presented identifier where the wildcard
-       character is embedded within an A-label or U-label [IDNA-DEFS] of
-       an internationalized domain name [IDNA-PROTO].
+3.  The client MAY match a presented identifier in which the wildcard
+character is not the only character of the label (e.g.,
+baz*.example.net and *baz.example.net and b*z.example.net would
+be taken to match baz1.example.net and foobaz.example.net and
+buzz.example.net, respectively).  However, the client SHOULD NOT
+attempt to match a presented identifier where the wildcard
+character is embedded within an A-label or U-label [IDNA-DEFS] of
+an internationalized domain name [IDNA-PROTO].
 |#
 
 (defun try-match-using-wildcards (hostname pattern)
@@ -133,11 +135,11 @@ http://tools.ietf.org/html/rfc6125
               (> pattern-w-pos pattern-leftmost-label-end)
               (string= pattern "xn--" :end1 4))
       (return-from try-match-using-wildcards nil))
-    
+
     (setf hostname-leftmost-label-end (position #\. hostname))
     (when (or (null hostname-leftmost-label-end) (not (string= hostname pattern :start1 hostname-leftmost-label-end
-                                                                                  :start2 pattern-leftmost-label-end)))
-      
+                                                                                :start2 pattern-leftmost-label-end)))
+
       (return-from try-match-using-wildcards nil))
 
 
@@ -147,7 +149,7 @@ http://tools.ietf.org/html/rfc6125
     t))
 
 (defun verify-hostname% (hostname pattern)
-  (log:debug "~A against ~A" hostname pattern)
+  (log:debug "Verifying ~A against ~A" hostname pattern)
   (setf hostname (remove-trailing-dot hostname)
         pattern (remove-trailing-dot pattern))
   (if (string= hostname pattern)
@@ -162,22 +164,28 @@ http://tools.ietf.org/html/rfc6125
 
 (defun try-match-alt-name (certificate hostname)
   (let ((altnames (x509-get-ext-d2i certificate 85 #|NID_subject_alt_name|# (cffi:null-pointer) (cffi:null-pointer)))
-        (matched nil))
+        (matched nil)
+        (alt-names-collection (list)))
     (if (not (cffi:null-pointer-p altnames))
         (prog1
             (let ((altnames-count (sk-general-name-num altnames)))
               (do ((i 0 (1+ i)))
-                  ((or matched (>= i  altnames-count)) matched)
+                  ((or (eq t matched) (>= i  altnames-count)) matched)
                 (let* ((name (sk-general-name-value altnames i))
                        (dns-name))
                   (cffi:with-foreign-slots ((type data) name (:struct general_name))
                     (when (= type 2 #|GEN_DNS|#)
                       (setq dns-name (try-get-string-data data))
                       (when dns-name
-                        (setq matched (verify-hostname% hostname dns-name))))))))
+                        (setf alt-names-collection (append alt-names-collection (list dns-name)))
+                        (setq matched (if (verify-hostname% hostname dns-name) t :no-alt-match))))))))
           ;; turns out sk_GENERAL_NAME_pop_free is layered #define mess, don't know what to do now
-          ;;(sk_GENERAL_NAME_pop_free altnames 1216 #|GENERAL_NAME_free|#) 
-          ))))
+          ;;(sk_GENERAL_NAME_pop_free altnames 1216 #|GENERAL_NAME_free|#)
+          ))
+    (if (eq :no-alt-match matched)
+        (error 'ssl-unable-to-match-alternative-name :hostname hostname
+                                                     :found-alt-names alt-names-collection)
+        matched)))
 
 (defun get-common-name-index (certificate)
   (x509-name-get-index-by-nid (x509-get-subject-name certificate) 13 #|NID_commonName|# -1))
@@ -193,21 +201,22 @@ http://tools.ietf.org/html/rfc6125
         dns-name)
     (setf common-name-index (get-common-name-index certificate))
     (unless common-name-index
-      (return-from try-match-common-name nil))
+      (error 'ssl-unable-to-obtain-common-name))
     (setf common-name-entry (get-common-name-entry certificate common-name-index))
     (unless common-name-entry
-      (return-from try-match-common-name nil))
+      (error 'ssl-unable-to-obtain-common-name))
     (setf common-name-asn1 (x509-name-entry-get-data common-name-entry))
     (unless common-name-asn1
-      (return-from try-match-common-name nil))
+      (error 'ssl-unable-to-obtain-common-name))
     (setq dns-name (try-get-string-data common-name-asn1))
     (unless dns-name
-      (return-from try-match-common-name nil))
-    (verify-hostname% hostname dns-name)))
+      (error 'ssl-unable-to-obtain-common-name))
+    (unless (verify-hostname% hostname dns-name)
+      (error 'ssl-unable-to-match-common-name :hostname hostname :found-common-name dns-name))))
 
 
 ;; from curl
 (defun verify-hostname (ssl hostname)
   (let ((certificate (ssl-get-peer-certificate ssl)))
-    (or (try-match-alt-name certificate hostname)
-        (try-match-common-name certificate hostname))))
+    (unless (try-match-alt-name certificate hostname)
+      (try-match-common-name certificate hostname))))
