@@ -294,11 +294,13 @@ After RELOAD, you need to call this again."
       (setf (ssl-check-verify-p) t))
     t))
 
-(defun ssl-stream-check-verify (ssl-stream)
+(defun ssl-stream-check-verify (ssl-stream hostname)
   (let* ((handle (ssl-stream-handle ssl-stream))
          (err (ssl-get-verify-result handle)))
     (unless (eql err 0)
-      (error 'ssl-error-verify :stream ssl-stream :error-code err))))
+      (error 'ssl-error-verify :stream ssl-stream :error-code err))    
+    (unless (verify-hostname handle hostname)
+      (error 'ssl-error-verify :stream ssl-stream :error-code 666))))
 
 (defun handle-external-format (stream ef)
   (if ef
@@ -308,7 +310,7 @@ After RELOAD, you need to call this again."
 ;; fixme: free the context when errors happen in this function
 (defun make-ssl-client-stream
     (socket &key certificate key password (method 'ssl-v23-method) external-format
-                 close-callback (unwrap-stream-p t))
+                 close-callback (unwrap-stream-p t) hostname)
   "Returns an SSL stream for the client socket descriptor SOCKET.
 CERTIFICATE is the path to a file containing the PEM-encoded certificate for
  your client. KEY is the path to the PEM-encoded key for the client, which
@@ -318,13 +320,16 @@ may be associated with the passphrase PASSWORD."
 			       :socket socket
 			       :close-callback close-callback))
         (handle (ssl-new *ssl-global-context*)))
+    (if hostname
+        (cffi:with-foreign-string (chostname hostname)
+          (ssl-set-tlsext-host-name handle chostname)))
     (setf socket (install-handle-and-bio stream handle socket unwrap-stream-p))
     (ssl-set-connect-state handle)
     (with-pem-password (password)
       (install-key-and-cert handle key certificate))
     (ensure-ssl-funcall stream handle #'ssl-connect handle)
     (when (ssl-check-verify-p)
-      (ssl-stream-check-verify stream))
+      (ssl-stream-check-verify stream hostname))
     (handle-external-format stream external-format)))
 
 ;; fixme: free the context when errors happen in this function
@@ -342,7 +347,7 @@ may be associated with the passphrase PASSWORD."
 		 :close-callback close-callback
 		 :certificate certificate
 		 :key key))
-        (handle (ssl-new *ssl-global-context*)))
+        (handle (ssl-new *ssl-global-context*)))    
     (setf socket (install-handle-and-bio stream handle socket unwrap-stream-p))
     (ssl-set-accept-state handle)
     (when (zerop (ssl-set-cipher-list handle cipher-list))

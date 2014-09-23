@@ -226,7 +226,7 @@ by READ-SSL-ERROR-QUEUE) or an SSL-ERROR condition."
 	       :ret error-code
 	       :queue queue
 	       :syscall syscall)
-      (error (case error-code
+  (error (case error-code
 	       (#.+ssl-error-none+ 'ssl-error-none)
 	       (#.+ssl-error-ssl+ 'ssl-error-ssl)
 	       (#.+ssl-error-want-read+ 'ssl-error-want-read)

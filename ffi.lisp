@@ -55,6 +55,7 @@
 (cffi:defctype ssl-method :pointer)
 (cffi:defctype ssl-ctx :pointer)
 (cffi:defctype ssl-pointer :pointer)
+(cffi:defctype x509-verify-param :pointer)
 
 (cffi:defcfun ("SSL_get_version" ssl-get-version)
     :string
@@ -208,6 +209,13 @@
   (larg :long)
   (parg :pointer))
 
+(cffi:defcfun ("SSL_ctrl" ssl-ctrl)
+    :long
+  (ssl :pointer)
+  (cmd :int)
+  (larg :long)
+  (parg :pointer))
+
 (cffi:defcfun ("SSL_CTX_set_default_passwd_cb" ssl-ctx-set-default-passwd-cb)
     :void
   (ctx ssl-ctx)
@@ -230,6 +238,17 @@
   (buf :pointer)
   (num :int))
 
+(cffi:defcfun ("SSL_CTX_set_options" ssl-ctx-set-options)
+    :long
+  (ctx :pointer)
+  (options :long))
+
+(cffi:defcfun ("SSL_CTX_set_verify" ssl-ctx-set-verify)
+    :void
+  (ctx :pointer)
+  (mode :int)
+  (verify-callback :pointer))
+
 (cffi:defcfun ("SSL_CTX_set_verify_depth" ssl-ctx-set-verify-depth)
     :void
   (ctx :pointer)
@@ -242,6 +261,36 @@
 (cffi:defcfun ("SSL_get_peer_certificate" ssl-get-peer-certificate)
     :pointer
   (ssl ssl-pointer))
+
+(cffi:defcfun ("SSL_CTX_set1_param" ssl-ctx-set1-param)
+    :pointer
+  (ssl ssl-pointer)
+  (param :pointer))
+
+(cffi:defcfun ("X509_VERIFY_PARAM_new" x509-verify-param-new)
+    :pointer)
+
+(cffi:defcfun ("X509_VERIFY_PARAM_set1_host" x509-verify-param-set1-host)
+    :int
+  (param :pointer) 
+  (name :string)
+  (namelen :int))
+
+(cffi:defcfun ("X509_get_ext_d2i" x509-get-ext-d2i)
+    :pointer
+  (cert :pointer)
+  (nid :int)
+  (crit :pointer)
+  (idx :pointer))
+
+(cffi:defcfun ("X509_VERIFY_PARAM_set_hostflags" x509-verify-param-set-hostflags)
+    :void
+  (param :pointer)
+  (flags :uint))
+
+(cffi:defcfun ("X509_VERIFY_PARAM_free" x509-verify-param-free)
+    :void
+  (param :pointer))
 
 (cffi:defcfun ("X509_free" x509-free)
     :void
@@ -260,6 +309,10 @@
 (cffi:defcfun ("X509_get_subject_name" x509-get-subject-name)
     :pointer                            ; *X509_NAME
   (x509 :pointer))
+
+(cffi:defcfun ("X509_STORE_CTX_get_error" X509_STORE_CTX-get-error)
+    :int
+  (ctx :pointer))
 
 (cffi:defcfun ("SSL_CTX_set_default_verify_paths" ssl-ctx-set-default-verify-paths)
     :int
@@ -466,11 +519,59 @@ will use this value.")
 (defun ssl-ctx-set-session-cache-mode (ctx mode)
   (ssl-ctx-ctrl ctx +SSL_CTRL_SET_SESS_CACHE_MODE+ mode (cffi:null-pointer)))
 
+(defun SSL-set-tlsext-host-name (ctx hostname)
+  (ssl-ctrl ctx 55 #|SSL_CTRL_SET_TLSEXT_HOSTNAME|# 0 #|TLSEXT_NAMETYPE_host_name|# hostname))
+
 (defvar *locks*)
 (defconstant +CRYPTO-LOCK+ 1)
 (defconstant +CRYPTO-UNLOCK+ 2)
 (defconstant +CRYPTO-READ+ 4)
 (defconstant +CRYPTO-WRITE+ 8)
+
+(defconstant +SSL-SESS-CACHE-OFF+ #x0000
+  "No session caching for client or server takes place.")
+(defconstant +SSL-SESS-CACHE-CLIENT+ #x0001
+  "Client sessions are added to the session cache.
+As there is no reliable way for the OpenSSL library to know whether a session should be reused
+or which session to choose (due to the abstract BIO layer the SSL engine does not have details
+about the connection), the application must select the session to be reused by using the
+SSL-SET-SESSION function. This option is not activated by default.")
+(defconstant +SSL-SESS-CACHE-SERVER+ #x0002
+  "Server sessions are added to the session cache.
+When a client proposes a session to be reused, the server looks for the corresponding session
+in (first) the internal session cache (unless +SSL-SESS-CACHE-NO-INTERNAL-LOOKUP+ is set), then
+(second) in the external cache if available. If the session is found, the server will try to
+reuse the session. This is the default.")
+(defconstant +SSL-SESS-CACHE-BOTH+ (logior +SSL-SESS-CACHE-CLIENT+ +SSL-SESS-CACHE-SERVER+)
+  "Enable both +SSL-SESS-CACHE-CLIENT+ and +SSL-SESS-CACHE-SERVER+ at the same time.")
+(defconstant +SSL-SESS-CACHE-NO-AUTO-CLEAR+ #x0080
+  "Normally the session cache is checked for expired sessions every 255 connections using the
+SSL-CTX-FLUSH-SESSIONS function. Since this may lead to a delay which cannot be controlled,
+the automatic flushing may be disabled and SSL-CTX-FLUSH-SESSIONS can be called explicitly
+by the application.")
+(defconstant +SSL-SESS-CACHE-NO-INTERNAL-LOOKUP+ #x0100
+  "By setting this flag, session-resume operations in an SSL/TLS server will not automatically
+look up sessions in the internal cache, even if sessions are automatically stored there.
+If external session caching callbacks are in use, this flag guarantees that all lookups are
+directed to the external cache. As automatic lookup only applies for SSL/TLS servers, the flag
+has no effect on clients.")
+(defconstant +SSL-SESS-CACHE-NO-INTERNAL-STORE+ #x0200
+  "Depending on the presence of +SSL-SESS-CACHE-CLIENT+ and/or +SSL-SESS-CACHE-SERVER+, sessions
+negotiated in an SSL/TLS handshake may be cached for possible reuse. Normally a new session is
+added to the internal cache as well as any external session caching (callback) that is configured
+for the SSL-CTX. This flag will prevent sessions being stored in the internal cache (though the
+application can add them manually using SSL-CTX-ADD-SESSION). Note: in any SSL/TLS servers where
+external caching is configured, any successful session lookups in the external cache (ie. for
+session-resume requests) would normally be copied into the local cache before processing continues
+- this flag prevents these additions to the internal cache as well.")
+(defconstant +SSL-SESS-CACHE-NO-INTERNAL+ (logior +SSL-SESS-CACHE-NO-INTERNAL-LOOKUP+ +SSL-SESS-CACHE-NO-INTERNAL-STORE+)
+  "Enable both +SSL-SESS-CACHE-NO-INTERNAL-LOOKUP+ and +SSL-SESS-CACHE-NO-INTERNAL-STORE+ at the same time.")
+
+
+(defconstant +SSL-VERIFY-NONE+ #x00)
+(defconstant +SSL-VERIFY-PEER+ #x01)
+(defconstant +SSL-VERIFY-FAIL-IF-NO-PEER-CERT+ #0x02)
+(defconstant +SSL-VERIFY-CLIENT-ONCE+ #x04)
 
 ;; zzz as of early 2011, bxthreads is totally broken on SBCL wrt. explicit
 ;; locking of recursive locks.  with-recursive-lock works, but acquire/release
@@ -524,6 +625,8 @@ will use this value.")
   (setf *ssl-check-verify-p* :unspecified)
   (setf *ssl-global-method* (funcall method))
   (setf *ssl-global-context* (ssl-ctx-new *ssl-global-method*))
+  (ssl-ctx-set-verify *ssl-global-context* +SSL-VERIFY-PEER+ (cffi:null-pointer))
+  (ssl-ctx-set-options *ssl-global-context* #x80000BFF)
   (ssl-ctx-set-session-cache-mode *ssl-global-context* 3)
   (ssl-ctx-set-default-passwd-cb *ssl-global-context* 
                                  (cffi:callback pem-password-callback))
@@ -566,7 +669,7 @@ context and in particular the loaded certificate chain."
 (defun reload ()
   (if *ssl-global-context*      
       (ssl-ctx-free *ssl-global-context*))
-  (cffi:load-foreign-library 'libssl)
+  (cffi:load-foreign-library 'libssl :search-path "/usr/local/ssl")
   (cffi:load-foreign-library 'libeay32)
   (setf *ssl-global-context* nil)
   (setf *ssl-global-method* nil)
