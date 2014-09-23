@@ -90,9 +90,69 @@ Check_host only")
   (type :int)
   (data :pointer))
 
-(defun verify-hostname% (hostname dns-name)
-  (log:info "~A against ~A" hostname dns-name)
-  (string= hostname dns-name))
+(defun remove-trailing-dot (str)
+  (if (eql (elt str (1- (length str))) #\.)
+      (subseq str 0 (- (length str) 2))
+      str))
+
+
+#|
+http://tools.ietf.org/html/rfc6125
+
+   1.  The client SHOULD NOT attempt to match a presented identifier in
+       which the wildcard character comprises a label other than the
+       left-most label (e.g., do not match bar.*.example.net).
+
+   2.  If the wildcard character is the only character of the left-most
+       label in the presented identifier, the client SHOULD NOT compare
+       against anything but the left-most label of the reference
+       identifier (e.g., *.example.com would match foo.example.com but
+       not bar.foo.example.com or example.com).
+
+   3.  The client MAY match a presented identifier in which the wildcard
+       character is not the only character of the label (e.g.,
+       baz*.example.net and *baz.example.net and b*z.example.net would
+       be taken to match baz1.example.net and foobaz.example.net and
+       buzz.example.net, respectively).  However, the client SHOULD NOT
+       attempt to match a presented identifier where the wildcard
+       character is embedded within an A-label or U-label [IDNA-DEFS] of
+       an internationalized domain name [IDNA-PROTO].
+|#
+
+(defun try-match-using-wildcards (hostname pattern)
+  (let ((pattern-w-pos (position #\* pattern))
+        (pattern-leftmost-label-end)
+        (hostname-leftmost-label-end))
+    (unless pattern-w-pos
+      (return-from try-match-using-wildcards nil))
+
+    ;; TODO: detect if hostname is IP address
+
+    (setq pattern-leftmost-label-end (position #\. pattern))
+    (when (or (null pattern-leftmost-label-end) (null (position #\. pattern :start (1+ pattern-leftmost-label-end)))
+              (> pattern-w-pos pattern-leftmost-label-end)
+              (string= pattern "xn--" :end1 4))
+      (return-from try-match-using-wildcards nil))
+    
+    (setf hostname-leftmost-label-end (position #\. hostname))
+    (when (or (null hostname-leftmost-label-end) (not (string= hostname pattern :start1 hostname-leftmost-label-end
+                                                                                  :start2 pattern-leftmost-label-end)))
+      
+      (return-from try-match-using-wildcards nil))
+
+
+    (when (< hostname-leftmost-label-end pattern-leftmost-label-end)
+      (return-from try-match-using-wildcards nil))
+
+    t))
+
+(defun verify-hostname% (hostname pattern)
+  (log:debug "~A against ~A" hostname pattern)
+  (setf hostname (remove-trailing-dot hostname)
+        pattern (remove-trailing-dot pattern))
+  (if (string= hostname pattern)
+      t
+      (try-match-using-wildcards hostname pattern)))
 
 (defun try-get-string-data (asn1-string)
   (cffi:with-foreign-slots ((length data) asn1-string (:struct asn1_string_st))
@@ -103,18 +163,21 @@ Check_host only")
 (defun try-match-alt-name (certificate hostname)
   (let ((altnames (x509-get-ext-d2i certificate 85 #|NID_subject_alt_name|# (cffi:null-pointer) (cffi:null-pointer)))
         (matched nil))
-    (when (not (cffi:null-pointer-p altnames))
-      (let ((altnames-count (sk-general-name-num altnames)))
-        (do ((i 0 (1+ i)))
-            ((or matched (>= i  altnames-count)))
-          (let* ((name (sk-general-name-value altnames i))
-                 (dns-name))
-            (cffi:with-foreign-slots ((type data) name (:struct general_name))
-              (when (= type 2 #|GEN_DNS|#)
-                (setq dns-name (try-get-string-data data))
-                (when dns-name
-                  (setq matched (verify-hostname% hostname dns-name)))))))))
-    matched))
+    (if (not (cffi:null-pointer-p altnames))
+        (prog1
+            (let ((altnames-count (sk-general-name-num altnames)))
+              (do ((i 0 (1+ i)))
+                  ((or matched (>= i  altnames-count)) matched)
+                (let* ((name (sk-general-name-value altnames i))
+                       (dns-name))
+                  (cffi:with-foreign-slots ((type data) name (:struct general_name))
+                    (when (= type 2 #|GEN_DNS|#)
+                      (setq dns-name (try-get-string-data data))
+                      (when dns-name
+                        (setq matched (verify-hostname% hostname dns-name))))))))
+          ;; turns out sk_GENERAL_NAME_pop_free is layered #define mess, don't know what to do now
+          ;;(sk_GENERAL_NAME_pop_free altnames 1216 #|GENERAL_NAME_free|#) 
+          ))))
 
 (defun get-common-name-index (certificate)
   (x509-name-get-index-by-nid (x509-get-subject-name certificate) 13 #|NID_commonName|# -1))
