@@ -1,3 +1,16 @@
+;;; Copyright (C) 2014  Ilya Khaprov https://github.com/deadtrickster
+;;;
+;;; See LICENSE for details.
+
+#+xcvb
+(module
+ (:depends-on ("package" "conditions" "ffi")))
+
+;; (eval-when (:compile-toplevel)
+;;   (declaim
+;;    (optimize (speed 3) (space 1) (safety 1) (debug 0) (compilation-speed 0))))
+
+
 (in-package :cl+ssl)
 
 (defconstant +X509-CHECK-FLAG-ALWAYS-CHECK-SUBJECT+ #x01
