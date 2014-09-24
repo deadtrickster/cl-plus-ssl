@@ -4,7 +4,7 @@
 
 #+xcvb
 (module
- (:depends-on ("package" "conditions" "ffi")))
+ (:depends-on ("package" "conditions" "ffi" "verification")))
 
 ;; (eval-when (:compile-toplevel)
 ;;   (declaim
@@ -42,7 +42,7 @@
                             (ca-files)
                             (ca-pathes)
                             (password-callback))
-
+  (ensure-initialized)
   (let ((ssl-ctx (ssl-ctx-new method)))
     (ssl-ctx-set-session-cache-mode ssl-ctx session-cache-mode)
     (add-verify-files ssl-ctx  ca-files)
