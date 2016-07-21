@@ -26,6 +26,7 @@
                  (:file "reload")
                  (:file "conditions")
                  (:file "ffi")
+                 (:file "ffi-1.1.0")
                  (:file "x509")
                  (:file "ffi-buffer-all")
                  #-clisp (:file "ffi-buffer")
@@ -35,13 +36,3 @@
                  (:file "random")
                  (:file "context")
                  (:file "verify-hostname")))))
-
-(defsystem :openssl-1.1.0
-  :description "FFI bindings to API introduced in OpenSSL 1.1.0"
-  :license "MIT"
-  :author "Anton Vodonosov"
-  :depends-on (:cffi)
-  :serial t
-  :components ((:module "src"
-                :serial t
-                :components ((:file "ffi-1.1.0")))))

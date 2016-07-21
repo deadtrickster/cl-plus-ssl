@@ -41,7 +41,7 @@
     ((stringp location)
      (add-verify-locations ctx (list location)))
     ((pathnamep location)
-     (add-verify-locations ctx (list location)))
+     (add-verify-locations ctx (list (namestring location))))
     ((and location (listp location))
      (add-verify-locations ctx location))
     ;; silently allow NIL as location

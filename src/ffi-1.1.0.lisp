@@ -1,8 +1,4 @@
-(defpackage :openssl-1.1.0
-  (:nicknames :ossl-1.1.0 :ossl110)
-  (:use :common-lisp)
-  (:export #:ssl-ctx-set-default-verify-dir
-           #:ssl-ctx-set-default-verify-file))
+(in-package :cl+ssl)
 
 (cffi:defcfun ("SSL_CTX_set_default_verify_dir" ssl-ctx-set-default-verify-dir)
     :int
